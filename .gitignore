@@ -1,0 +1,21 @@
+.env
+
+# data artifacts
+data/
+logs/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+
+
+__pycache__/
+*.pyc
+.venv/
+artifacts/linucb/
+artifacts/embeddings_gat/npy/
+artifacts/snapshots/npz/
+data/
+logs/
