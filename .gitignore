@@ -14,8 +14,6 @@ __pycache__/
 __pycache__/
 *.pyc
 .venv/
-artifacts/linucb/
-artifacts/embeddings_gat/npy/
-artifacts/snapshots/npz/
+artifacts
 data/
 logs/

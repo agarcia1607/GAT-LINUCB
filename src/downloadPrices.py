@@ -1,5 +1,6 @@
 from pydantic import validate_call
 import pandas as pd
+from pathlib import Path
 import os
 
 class DownloadPrices() :
@@ -112,11 +113,12 @@ class DownloadPrices() :
         print(f"[INFO] Report: {REPORT_CSV}")
 
     @validate_call
-    def get_tickers(self) -> list[str]:
-        """Fetch S&P 500 tickers from TICKERS_URL and return the Symbol list."""
+    def get_tickers(self, save_json_path: Path = "tickers.json") -> list[str]:
+        """Fetch tickers from TICKERS_URL, save them to JSON in ARTIFACTS_DIR, and return the list."""
         import requests
-        import pandas as pd
         from io import StringIO
+        import pandas as pd
+        import json
 
         url = os.getenv("TICKERS_URL")
         headers = {
@@ -128,10 +130,22 @@ class DownloadPrices() :
 
         resp = requests.get(url, headers=headers)
         resp.raise_for_status()
+        # Use a file-like buffer for pandas HTML parsing.
         html = StringIO(resp.text)
 
+        # First HTML table is expected to include the Symbol column.
         sp500 = pd.read_html(html)[0]
         tickers = sp500["Symbol"].tolist()
+
+        # Persist the downloaded tickers in the artifacts directory.
+        save_json_path = Path(os.getenv("ARTIFACTS_DIR")) / Path("tickers.json")
+        with open(save_json_path, "w", encoding="utf-8") as f:
+            data = {
+                "tickers": tickers
+            }
+            json.dump(data, f, indent=2)
+        if self.verbose:
+            print(f"[INFO] Tickers saved to: {save_json_path}")
 
         if self.verbose:
             print(f"[INFO] Parsed {len(tickers)} tickers.")
