@@ -5,116 +5,28 @@ import os
 
 class DownloadPrices() :
     def __init__(self, verbose: bool = False):
+
         self.verbose = verbose
 
-        from dotenv import load_dotenv
-
-        load_dotenv()
-        self.start_date = os.getenv("START_DATE", "2015-01-01")
-        self.data_raw_dir = os.getenv("DATA_RAW_DIR", "data/raw")
-        self.logs_dir = os.getenv("LOGS_DIR", "logs")
-        self.out_parquet = os.path.join(
-            self.data_raw_dir,
-            os.getenv("PRICES_DAILY_FILE", "prices_daily_adjclose.parquet")
-        )
-        self.out_csv = self.out_parquet.replace(".parquet", ".csv")
-        self.report_csv = os.path.join(
-            self.logs_dir,
-            os.getenv("DOWNLOAD_REPORT_FILE", "download_report.csv")
-        )
+        return
 
     def main(self):
-        os.makedirs("data/raw", exist_ok=True)
-        os.makedirs("logs", exist_ok=True)
+        print("[START] Download prices")
 
-        tickers = self.load_tickers(ART_TICKERS)
-        print(f"[INFO] Tickers loaded: {len(tickers)}")
+        tickers = self._get_tickers()
+        print("\t[DONE] get_tickers()")
 
-        # Download
-        # auto_adjust=False to keep 'Adj Close' column in output
-        df = yf.download(
-            tickers=tickers,
-            start=START_DATE,
-            auto_adjust=False,
-            group_by="column",
-            progress=True,
-            threads=True,
-        )
+        self._download_tickers(tickers)
+        print("\t[DONE] download_tickers()")
 
-        if df.empty:
-            raise RuntimeError("Downloaded dataframe is empty. Check internet / Yahoo availability / tickers.")
+        print("[FINISHED] Download prices")
 
-        # Extract Adj Close
-        # yf returns columns: ('Adj Close', ticker) etc when multiple tickers
-        report_rows = []
-        adj = None
-
-        if isinstance(df.columns, pd.MultiIndex):
-            if "Adj Close" not in df.columns.get_level_values(0):
-                raise RuntimeError("Adj Close not found in downloaded data. Columns: " + str(df.columns.levels[0]))
-            adj = df["Adj Close"].copy()
-        else:
-            # single ticker case (not expected, but handle)
-            if "Adj Close" not in df.columns:
-                raise RuntimeError("Adj Close not found for single ticker download.")
-            adj = df[["Adj Close"]].rename(columns={"Adj Close": tickers[0]})
-
-        # Clean index
-        adj.index = pd.to_datetime(adj.index)
-        adj = adj.sort_index()
-        adj = adj[~adj.index.duplicated(keep="last")]
-
-        # Build report per ticker
-        for t in tickers:
-            if t not in adj.columns:
-                report_rows.append({
-                    "ticker": t,
-                    "status": "missing_column",
-                    "start_found": None,
-                    "end_found": None,
-                    "n_rows_nonnull": 0,
-                    "pct_missing": 1.0,
-                    "notes": "Ticker not present in Adj Close columns"
-                })
-                continue
-
-            s = adj[t]
-            nonnull = s.dropna()
-            status = "ok" if len(nonnull) > 0 else "all_nan"
-            start_found = nonnull.index.min().date().isoformat() if len(nonnull) else None
-            end_found = nonnull.index.max().date().isoformat() if len(nonnull) else None
-            n_rows_nonnull = int(nonnull.shape[0])
-            pct_missing = float(s.isna().mean()) if len(s) else 1.0
-
-            report_rows.append({
-                "ticker": t,
-                "status": status,
-                "start_found": start_found,
-                "end_found": end_found,
-                "n_rows_nonnull": n_rows_nonnull,
-                "pct_missing": round(pct_missing, 6),
-                "notes": ""
-            })
-
-        report = pd.DataFrame(report_rows).sort_values(["status", "pct_missing", "ticker"], ascending=[True, True, True])
-        report.to_csv(REPORT_CSV, index=False)
-
-        # Save raw adjclose (keep all tickers for now; cleaning comes in Paso 3/5)
-        saved_path = safe_to_parquet(adj, OUT_PARQUET, OUT_CSV)
-
-        # Update metadata
-        update_metadata(download_done=True, saved_path=saved_path, n_tickers=len(tickers), n_dates=adj.shape[0])
-
-        # Quick validation prints
-        ok_count = (report["status"] == "ok").sum()
-        print(f"[INFO] Download complete. Dates: {adj.index.min().date()} -> {adj.index.max().date()} | rows={adj.shape[0]}")
-        print(f"[INFO] Tickers status: ok={ok_count} / total={len(tickers)}")
-        print(f"[INFO] Saved: {saved_path}")
-        print(f"[INFO] Report: {REPORT_CSV}")
+        return
 
     @validate_call
-    def get_tickers(self, save_json_path: Path = "tickers.json") -> list[str]:
+    def _get_tickers(self) -> list[str]:
         """Fetch tickers from TICKERS_URL, save them to JSON in ARTIFACTS_DIR, and return the list."""
+
         import requests
         from io import StringIO
         import pandas as pd
@@ -126,7 +38,7 @@ class DownloadPrices() :
         }
 
         if self.verbose:
-            print(f"[INFO] Fetching tickers from: {url}")
+            print(f"\t[INFO] Fetching tickers from: {url}")
 
         resp = requests.get(url, headers=headers)
         resp.raise_for_status()
@@ -138,67 +50,64 @@ class DownloadPrices() :
         tickers = sp500["Symbol"].tolist()
 
         # Persist the downloaded tickers in the artifacts directory.
-        save_json_path = Path(os.getenv("ARTIFACTS_DIR")) / Path("tickers.json")
+        tickers_dir = os.getenv("TICKERS_DIR")
+        if tickers_dir is None:
+            raise RuntimeError("TICKERS_DIR environment variable not set.")
+        save_json_path = Path(tickers_dir) / Path("tickers.json")
         with open(save_json_path, "w", encoding="utf-8") as f:
             data = {
                 "tickers": tickers
             }
             json.dump(data, f, indent=2)
         if self.verbose:
-            print(f"[INFO] Tickers saved to: {save_json_path}")
+            print(f"\t[INFO] Tickers saved to: {save_json_path}")
 
         if self.verbose:
-            print(f"[INFO] Parsed {len(tickers)} tickers.")
+            print(f"\t[INFO] Parsed {len(tickers)} tickers.")
 
         return tickers
-
-    @validate_call
-    def load_tickers(self, path: str) -> list[str]:
-        import json
-
-        with open(path, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        tickers = []
-        for _, group in d["groups"].items():
-            tickers.extend(group)
-        # unique preserving order
-        seen = set()
-        tickers_unique = []
-        for t in tickers:
-            if t not in seen:
-                seen.add(t)
-                tickers_unique.append(t)
-        return tickers_unique
-
-    """
-    @validate_call
-    def safe_to_parquet(self, df: pd.DataFrame, parquet_path: str, csv_path: str) -> str:
-        try:
-            df.to_parquet(parquet_path, index=True)
-            return parquet_path
-        except Exception as e:
-            print(f"[WARN] Parquet failed ({e}). Falling back to CSV.")
-            df.to_csv(csv_path, index=True)
-            return csv_path
-
-    @validate_call
-    def update_metadata(self, download_done: bool, saved_path: str, n_tickers: int, n_dates: int):
-        return
     
-        if not os.path.exists(META_JSON):
-            return
-        with open(META_JSON, "r", encoding="utf-8") as f:
-            meta = json.load(f)
+    def _download_tickers(self, tickers: list[str]) -> bool:
+        """Download historical prices for tickers, normalize to long format, and save as parquet."""
+        
+        from yfinance import download
 
-        meta.setdefault("run", {})
-        meta["run"]["download_timestamp_local"] = datetime.now().isoformat(timespec="seconds")
-        meta["run"]["download_saved_path"] = saved_path
-        meta["run"]["n_tickers_candidate"] = n_tickers
-        meta["run"]["n_dates_downloaded"] = n_dates
+        start_date = os.getenv("START_DATE")
+        if start_date is None:
+            raise RuntimeError("START_DATE environment variable not set.")
 
-        meta.setdefault("status", {})
-        meta["status"]["download_done"] = download_done
+        if self.verbose:
+            print(f"\t[INFO] Downloading {len(tickers)} tickers from {start_date}...")
 
-        with open(META_JSON, "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=2)
-    """
+        df = download(
+            tickers=tickers,
+            start=start_date,
+            auto_adjust=False,
+            group_by="column",
+            progress=True,
+            threads=True,
+        )
+
+        # Convert wide multi-index columns into a long, row-per-ticker format.
+        long = (
+            df.stack(level=1, future_stack=True)
+            .rename_axis(index=["date", "ticker"])
+            .reset_index()
+        )
+        # Normalize column names for downstream consistency.
+        long.columns = [str(c).upper().replace(" ", "_") for c in long.columns]
+        long.set_index("DATE", inplace=True)
+
+        if self.verbose:
+            print(f"\t[INFO] Download complete. Dates: {long.index.min().date()} -> {long.index.max().date()} | rows={long.shape[0]}")
+
+        tickers_dir = os.getenv("TICKERS_DIR")
+        if tickers_dir is None:
+            raise RuntimeError("TICKERS_DIR environment variable not set.")
+        # Persist the normalized dataset for later steps.
+        long.to_parquet(Path(tickers_dir) / Path("prices.parquet"), index=True)
+
+        if self.verbose:
+            print(f"\t[INFO] Saved to: {Path(tickers_dir) / Path('prices.parquet')}")
+
+        return True
