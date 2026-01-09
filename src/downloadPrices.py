@@ -13,9 +13,11 @@ class DownloadPrices() :
     def main(self):
         print("[START] Download prices")
 
+        print("\t[RUNNING] get_tickers()")
         tickers = self._get_tickers()
         print("\t[DONE] get_tickers()")
 
+        print("\t[RUNNING] download_tickers()")
         self._download_tickers(tickers)
         print("\t[DONE] download_tickers()")
 
@@ -32,15 +34,18 @@ class DownloadPrices() :
         import pandas as pd
         import json
 
-        url = os.getenv("TICKERS_URL")
+        URL = os.getenv("TICKERS_URL")
+        if URL is None:
+            raise RuntimeError("TICKERS_URL environment variable not set.")
+
         headers = {
             "User-Agent": "Mozilla/5.0"
         }
 
         if self.verbose:
-            print(f"\t[INFO] Fetching tickers from: {url}")
+            print(f"\t\t[INFO] Fetching tickers from: {URL}")
 
-        resp = requests.get(url, headers=headers)
+        resp = requests.get(URL, headers=headers)
         resp.raise_for_status()
         # Use a file-like buffer for pandas HTML parsing.
         html = StringIO(resp.text)
@@ -50,42 +55,47 @@ class DownloadPrices() :
         tickers = sp500["Symbol"].tolist()
 
         # Persist the downloaded tickers in the artifacts directory.
-        tickers_dir = os.getenv("TICKERS_DIR")
-        if tickers_dir is None:
+        TICKERS_DIR = os.getenv("TICKERS_DIR")
+        if TICKERS_DIR is None:
             raise RuntimeError("TICKERS_DIR environment variable not set.")
-        save_json_path = Path(tickers_dir) / Path("tickers.json")
+        save_json_path = Path(TICKERS_DIR) / Path("tickers.json")
         with open(save_json_path, "w", encoding="utf-8") as f:
             data = {
                 "tickers": tickers
             }
             json.dump(data, f, indent=2)
         if self.verbose:
-            print(f"\t[INFO] Tickers saved to: {save_json_path}")
+            print(f"\t\t[INFO] Tickers saved to: {save_json_path}")
 
         if self.verbose:
-            print(f"\t[INFO] Parsed {len(tickers)} tickers.")
+            print(f"\t\t[INFO] Parsed {len(tickers)} tickers.")
 
         return tickers
     
     def _download_tickers(self, tickers: list[str]) -> bool:
         """Download historical prices for tickers, normalize to long format, and save as parquet."""
-        
+
         from yfinance import download
 
-        start_date = os.getenv("START_DATE")
-        if start_date is None:
+        START_DATE = os.getenv("START_DATE")
+        if START_DATE is None:
             raise RuntimeError("START_DATE environment variable not set.")
 
+        INTERVAL = os.getenv("INTERVAL")
+        if INTERVAL is None:
+            raise RuntimeError("INTERVAL environment variable not set.")
+
         if self.verbose:
-            print(f"\t[INFO] Downloading {len(tickers)} tickers from {start_date}...")
+            print(f"\t\t[INFO] Downloading {len(tickers)} tickers from {START_DATE}...")
 
         df = download(
             tickers=tickers,
-            start=start_date,
+            start=START_DATE,
             auto_adjust=False,
             group_by="column",
             progress=True,
             threads=True,
+            interval=INTERVAL
         )
 
         # Convert wide multi-index columns into a long, row-per-ticker format.
@@ -99,15 +109,15 @@ class DownloadPrices() :
         long.set_index("DATE", inplace=True)
 
         if self.verbose:
-            print(f"\t[INFO] Download complete. Dates: {long.index.min().date()} -> {long.index.max().date()} | rows={long.shape[0]}")
+            print(f"\t\t[INFO] Download complete. Dates: {long.index.min().date()} -> {long.index.max().date()} | rows={long.shape[0]}")
 
-        tickers_dir = os.getenv("TICKERS_DIR")
-        if tickers_dir is None:
+        TICKERS_DIR = os.getenv("TICKERS_DIR")
+        if TICKERS_DIR is None:
             raise RuntimeError("TICKERS_DIR environment variable not set.")
         # Persist the normalized dataset for later steps.
-        long.to_parquet(Path(tickers_dir) / Path("prices.parquet"), index=True)
+        long.to_parquet(Path(TICKERS_DIR) / Path("prices.parquet"), index=True)
 
         if self.verbose:
-            print(f"\t[INFO] Saved to: {Path(tickers_dir) / Path('prices.parquet')}")
+            print(f"\t\t[INFO] Saved to: {Path(TICKERS_DIR) / Path('prices.parquet')}")
 
         return True
