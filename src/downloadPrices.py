@@ -5,9 +5,7 @@ import os
 
 class DownloadPrices() :
     def __init__(self, verbose: bool = False):
-
         self.verbose = verbose
-
         return
 
     def main(self):
