@@ -1,9 +1,9 @@
 from pydantic import validate_call
-import pandas as pd
 from pathlib import Path
 import os
 
 class DownloadPrices() :
+    @validate_call
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
         return
@@ -113,10 +113,11 @@ class DownloadPrices() :
         TICKERS_DIR = os.getenv("TICKERS_DIR")
         if TICKERS_DIR is None:
             raise RuntimeError("TICKERS_DIR environment variable not set.")
+        prices_raw_path = Path(TICKERS_DIR) / Path("prices_raw.parquet")
         # Persist the normalized dataset for later steps.
-        long.to_parquet(Path(TICKERS_DIR) / Path("prices.parquet"), index=True)
+        long.to_parquet(prices_raw_path, index=True)
 
         if self.verbose:
-            print(f"\t\t[INFO] Saved to: {Path(TICKERS_DIR) / Path('prices.parquet')}")
+            print(f"\t\t[INFO] Saved to: {prices_raw_path}")
 
         return True
