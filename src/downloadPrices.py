@@ -50,7 +50,8 @@ class DownloadPrices() :
 
         # First HTML table is expected to include the Symbol column.
         sp500 = pd.read_html(html)[0]
-        tickers = sp500["Symbol"].tolist()
+        tickers: list[str] = sp500["Symbol"].tolist()
+        tickers = [t.replace(".", "-") for t in tickers]
 
         # Persist the downloaded tickers in the artifacts directory.
         TICKERS_DIR = os.getenv("TICKERS_DIR")
