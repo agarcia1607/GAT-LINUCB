@@ -1,19 +1,10 @@
+artifacts/
+logs/
+data/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.venv-test/
 .env
-
-# data artifacts
-data/
-logs/
-
-# python
-__pycache__/
-*.pyc
-.venv/
-
-
-
-__pycache__/
-*.pyc
-.venv/
-artifacts
-data/
-logs/

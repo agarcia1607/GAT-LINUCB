@@ -36,22 +36,17 @@ def run_block3(
     diag_path = os.path.join(out_dir, "embeddings_diag.csv")
     index_path = os.path.join(out_dir, "embeddings_index.csv")
 
-    # index
-    with open(index_path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["date", "path_npy", "N", "d"])
-        dates = ds.get_dates() if limit is None else ds.get_dates()[:limit]
-        for date in dates:
-            w.writerow([date, f"npy/{date}.npy", 48, out_dim])
-
     diag_rows: List[Dict] = []
+    index_rows: List[List] = []
+
     n = len(ds) if limit is None else min(limit, len(ds))
 
     for i in range(n):
         data = ds[i]
         date = data.date
+        num_nodes = int(data.x.shape[0])
 
-        assert_snapshot_contract(data, num_nodes=48)
+        assert_snapshot_contract(data, num_nodes=num_nodes)
 
         data = data.to(device)
         z = model(data.x, data.edge_index, data.edge_attr)
@@ -61,7 +56,14 @@ def run_block3(
 
         np.save(os.path.join(out_dir, "npy", f"{date}.npy"), z.cpu().numpy().astype(np.float32))
 
+        index_rows.append([date, f"npy/{date}.npy", num_nodes, out_dim])
         diag_rows.append({"date": date, **st, **sens})
+
+    with open(index_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["date", "path_npy", "N", "d"])
+        for row in index_rows:
+            w.writerow(row)
 
     cols = ["date", "z_mean_abs", "z_std", "z_max_abs", "z_nan_count",
             "delta_edgeattr0", "delta_negedgeattr"]
@@ -77,4 +79,4 @@ def run_block3(
 
 
 if __name__ == "__main__":
-    run_block3(limit=3)  # start small
+    run_block3()
