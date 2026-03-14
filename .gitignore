@@ -1,10 +1,20 @@
+# artifacts generados
 artifacts/
 logs/
 data/
+
+# python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# entornos
 .venv/
 .venv-test/
+
+# variables de entorno
 .env
+
+# OS
+.DS_Store
