@@ -44,15 +44,15 @@ def sharpe_reward(
     annualize: bool = True,
 ) -> float:
     """
-    Reward = Sharpe rolling del activo seleccionado.
-    history: dict {asset_idx: [retornos pasados]}
+    Reward = rolling Sharpe of the selected asset.
+    history: dict {asset_idx: [past returns]}
     """
     if asset_idx not in history:
         history[asset_idx] = []
     history[asset_idx].append(r_raw)
     buf = history[asset_idx][-window:]
     if len(buf) < 4:
-        return r_raw  # fallback a retorno crudo al inicio
+        return r_raw  # fallback to raw return at start
     arr = np.array(buf)
     std = arr.std()
     if std < 1e-8:
@@ -75,14 +75,54 @@ def linucb_init(d: int, lam: float) -> LinUCBState:
     return LinUCBState(A_inv=A_inv, b=b)
 
 
+def linucb_warmstart(
+    d: int,
+    lam: float,
+    context_dir: Path,
+    dates: list,
+    returns: pd.DataFrame,
+    n_weeks: int = 52,
+) -> LinUCBState:
+    """
+    Initializes LinUCB with historical signal prior to evaluation period.
+    Uses average historical returns per asset to warm-start b,
+    reducing cold-start exploration cost.
+    """
+    st = linucb_init(d=d, lam=lam)
+
+    start_eval = dates[0]
+    hist = returns[returns.index < start_eval].tail(n_weeks)
+
+    if len(hist) == 0:
+        print("[WARN] No historical data available for warm start — using cold start")
+        return st
+
+    # Load first evaluation snapshot as context proxy
+    X = np.load(context_dir / f"{start_eval.date().isoformat()}.npy").astype(np.float64)
+    K = X.shape[0]
+
+    print(f"[INFO] Warm start: {len(hist)} weeks of history, {K} assets")
+
+    # Update b silently with historical average return per asset
+    for col_idx in range(min(K, returns.shape[1])):
+        ticker = returns.columns[col_idx]
+        if ticker in hist.columns:
+            r_hist = float(hist[ticker].mean())
+            linucb_update(st, X[col_idx], r_hist)
+
+    th = theta_hat(st)
+    print(f"[INFO] Warm start complete — ||θ||: {np.linalg.norm(th):.4f}")
+    return st
+
+
 def theta_hat(st: LinUCBState) -> np.ndarray:
     return st.A_inv @ st.b
 
 
 def ucb_scores(st: LinUCBState, X: np.ndarray, alpha: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    X: (K,d) contextos para todos los brazos.
-    Retorna (ucb, mu, sigma) con shape (K,).
+    X: (K,d) contexts for all arms.
+    Returns (ucb, mu, sigma) with shape (K,).
     """
     th = theta_hat(st)
     mu = X @ th
@@ -94,7 +134,7 @@ def ucb_scores(st: LinUCBState, X: np.ndarray, alpha: float) -> tuple[np.ndarray
 
 def linucb_update(st: LinUCBState, x: np.ndarray, r: float) -> None:
     """
-    Sherman-Morrison para A_inv cuando A <- A + x x^T
+    Sherman-Morrison update for A_inv when A <- A + x x^T
     """
     x = x.astype(np.float64, copy=False)
     Ainv = st.A_inv
@@ -115,6 +155,7 @@ def run_policy(
     seed: int,
     out_dir: Path,
     reward_mode: str = "raw",
+    warm_start: bool = False,
 ) -> dict:
     rng = np.random.default_rng(seed)
 
@@ -131,7 +172,13 @@ def run_policy(
     if K != returns.shape[1]:
         raise ValueError(f"K mismatch: context has {K} arms, returns has {returns.shape[1]} columns")
 
-    st = linucb_init(d=d, lam=lam) if policy in ("linucb", "greedy") else None
+    if policy in ("linucb", "greedy"):
+        if warm_start and policy == "linucb":
+            st = linucb_warmstart(d, lam, context_dir, dates, returns, n_weeks=12)
+        else:
+            st = linucb_init(d=d, lam=lam)
+    else:
+        st = None
 
     rows = []
     cum_reward, cum_regret = 0.0, 0.0
@@ -139,7 +186,7 @@ def run_policy(
     repeats = 0
     theta_norm = None
 
-    sharpe_history: dict = {}  # buffer rolling por activo
+    sharpe_history: dict = {}  # rolling buffer per asset
 
     for t in range(T - 1):
         date_t = dates[t]
@@ -148,7 +195,7 @@ def run_policy(
         X = np.load(context_dir / f"{date_t.date().isoformat()}.npy").astype(np.float64)
         assert X.shape == (K, d), f"Bad context shape at {date_t}: {X.shape}"
 
-        # Acción
+        # Action selection
         if policy == "random":
             a = int(rng.integers(0, K))
             mu_a = sigma_a = ucb_a = None
@@ -163,29 +210,29 @@ def run_policy(
         else:
             raise ValueError(f"Unknown policy: {policy}")
 
-        # Reward causal: retorno real de la semana siguiente
+        # Causal reward: next week's realized return
         r_raw = float(returns.loc[date_next, returns.columns[a]])
 
-        # Reward usado para aprendizaje
+        # Learning signal
         if reward_mode == "sharpe":
             r = sharpe_reward(sharpe_history, a, r_raw, window=12)
         else:
             r = clip_reward(r_raw, reward_clip)
 
-        # Regret empírico: vs mejor activo en hindsight
+        # Empirical regret vs hindsight best
         best_next = float(np.max(returns.loc[date_next].values))
         regret_emp = best_next - float(returns.loc[date_next, returns.columns[a]])
 
         cum_reward += r
         cum_regret += regret_emp
 
-        # Update online
+        # Online update
         if policy in ("linucb", "greedy"):
             linucb_update(st, X[a], r)  # type: ignore[arg-type]
             th = theta_hat(st)          # type: ignore[arg-type]
             theta_norm = float(np.linalg.norm(th))
 
-        # Colapso (repetición)
+        # Collapse tracking
         if last_a is not None and a == last_a:
             repeats += 1
         last_a = a
@@ -222,6 +269,7 @@ def run_policy(
         "lambda": float(lam),
         "reward_clip": None if reward_clip is None else float(reward_clip),
         "reward_mode": reward_mode,
+        "warm_start": warm_start,
         "seed": int(seed),
         "cum_reward": float(cum_reward),
         "cum_regret_emp": float(cum_regret),
@@ -242,7 +290,9 @@ def main():
                     help="Clip reward to [-c,c]. Use NaN to disable.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--reward_mode", choices=["raw", "sharpe"], default="sharpe",
-                    help="Reward signal for LinUCB learning: raw return or rolling Sharpe.")
+                    help="Reward signal for LinUCB: raw return or rolling Sharpe.")
+    ap.add_argument("--warm_start", action="store_true", default=False,
+                    help="Initialize LinUCB with historical returns prior to evaluation period.")
     args = ap.parse_args()
 
     context_dir = Path("artifacts/embeddings_gat/npy") if args.context == "embeddings" else Path("artifacts/X_raw/npy")
@@ -257,7 +307,7 @@ def main():
     soft_mkdir(out_dir)
 
     summaries = []
-    summaries.append(run_policy("linucb", context_dir, returns, dates, args.alpha, args.lam, reward_clip, args.seed, out_dir, reward_mode=args.reward_mode))
+    summaries.append(run_policy("linucb", context_dir, returns, dates, args.alpha, args.lam, reward_clip, args.seed, out_dir, reward_mode=args.reward_mode, warm_start=args.warm_start))
     summaries.append(run_policy("greedy", context_dir, returns, dates, 0.0, args.lam, reward_clip, args.seed, out_dir, reward_mode=args.reward_mode))
     summaries.append(run_policy("random", context_dir, returns, dates, 0.0, args.lam, reward_clip, args.seed, out_dir, reward_mode="raw"))
 
