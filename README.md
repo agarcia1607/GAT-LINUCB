@@ -1,59 +1,61 @@
 # GAT-LINUCB: Graph Attention Networks + Contextual Bandits for Asset Selection
 
-This project builds a reproducible machine learning pipeline that combines **graph neural networks** and **contextual bandits** to model financial markets and perform asset selection.
+![Python](https://img.shields.io/badge/Python-3.11-blue?style=flat-square&logo=python)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?style=flat-square&logo=pytorch)
+![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker)
+![License](https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square)
 
-The idea is to represent the market as a **dynamic graph of assets**, learn **graph-aware embeddings using Graph Attention Networks (GAT)**, and then use those embeddings as context for **bandit algorithms such as LinUCB**.
+A reproducible machine learning pipeline that combines **Graph Attention Networks (GAT)** and **contextual bandits (LinUCB)** for sequential asset selection in financial markets.
 
----
-
-# Overview
-
-The pipeline performs the following steps:
-
-1. Download historical asset prices
-2. Build weekly returns
-3. Construct rolling correlation graphs
-4. Generate graph snapshots
-5. Train GAT embeddings for assets
-6. Run contextual bandit policies
-
-These steps produce representations of assets that capture **market structure** rather than treating each asset independently.
+The core hypothesis: representing the market as a **dynamic graph of correlated assets** and learning **graph-aware embeddings** produces better context for bandit-based decision-making than raw price features alone.
 
 ---
 
-# Project Structure
+## Results
 
-```
-GAT-LINUCB
-│
-├── src/
-│   ├── block3/
-│   │   └── embed.py
-│   ├── 02_prepare_weekly_adjclose.py
-│   └── ...
-│
-├── run_pipeline.py        # end-to-end pipeline
-├── run_bandits.py         # contextual bandit experiments
-├── config.py              # configuration variables
-├── requirements.txt
-├── .gitignore
-│
-├── artifacts/             # generated outputs (ignored)
-├── data/                  # intermediate data (ignored)
-├── logs/                  # logs (ignored)
-```
+### Cumulative Reward — LinUCB: Embeddings vs Raw Features
 
-The repository only tracks **code and configuration**. Generated data and artifacts are excluded to keep the repository lightweight and reproducible.
+![Reward acumulado](reports/reward_acumulado.png)
+
+LinUCB with GAT embeddings (`cum_reward = 1.13`) outperforms LinUCB with raw features (`cum_reward = 0.99`) over 155 weeks of sequential selection.
+
+### Policy Comparison (Embeddings context, d=16)
+
+| Policy | Cum. Reward | Cum. Regret | Repeat Rate |
+|---|---|---|---|
+| **LinUCB** | **1.131** | 15.508 | 0.364 |
+| Random | 0.247 | 16.393 | 0.013 |
+| Greedy | -0.427 | 17.067 | 0.435 |
+
+LinUCB achieves the highest cumulative reward and lowest regret. Greedy collapses due to over-exploitation (repeat rate 0.44).
+
+### Cumulative Regret — Embeddings vs Raw Features
+
+![Regret acumulado](reports/regret_acumulado.png)
+
+Both feature representations produce similar regret trajectories, suggesting the advantage of embeddings comes from reward quality, not exploration efficiency.
+
+### Asset Selection Distribution (Embeddings — LinUCB)
+
+![Action distribution](reports/action_distribution.png)
+
+LinUCB maintains a diversified portfolio: TSLA leads at 24% but the agent selects across 15+ assets, avoiding full concentration.
+
+### Parameter Norm Evolution (||θ_t||)
+
+![Theta norm](reports/theta_norm.png)
+
+θ_t grows steadily over time, reflecting continuous learning from weekly market feedback without divergence.
 
 ---
 
-# Pipeline
+## Pipeline
 
 ```
 Yahoo Finance prices
         │
         ▼
-Weekly adjusted prices
+Weekly adjusted close prices
         │
         ▼
 Weekly returns
@@ -62,103 +64,139 @@ Weekly returns
 Rolling correlation matrices
         │
         ▼
-Graph snapshots
+Graph snapshots (one per week)
         │
         ▼
 Graph Attention Network (GAT)
         │
         ▼
-Asset embeddings
+Asset embeddings (d=16)
         │
         ▼
 Contextual bandits (LinUCB / Greedy / Random)
+        │
+        ▼
+Sequential asset selection + regret evaluation
 ```
 
-The embeddings encode **structural relationships between assets** derived from the market network.
+---
+
+## Architecture
+
+### Graph Construction
+
+Each week, assets are connected based on rolling return correlations. This produces a dynamic graph where edge weights reflect co-movement strength — capturing sector clustering and regime changes over time.
+
+### Node Features
+
+Each asset node is described by momentum and volatility features, combined with graph structure through the attention mechanism.
+
+### GAT Embeddings
+
+Graph Attention Networks produce embeddings that encode:
+- Asset co-movement patterns
+- Sector-like clustering
+- Dynamic structural relationships
+
+These embeddings serve as context vectors for the bandit algorithms.
+
+### Contextual Bandits
+
+Three policies are evaluated under the same market sequence:
+
+| Policy | Strategy |
+|---|---|
+| **LinUCB** | Upper Confidence Bound — balances exploration and exploitation |
+| **Greedy** | Always selects the highest estimated reward asset |
+| **Random** | Uniform random selection (baseline) |
+
+Rewards are the realized weekly returns of the selected asset.
 
 ---
 
-# Main Components
+## Quick Start
 
-## Graph Construction
+```bash
+git clone https://github.com/agarcia1607/GAT-LINUCB
+cd GAT-LINUCB
 
-Assets are connected based on **rolling correlations of returns**. Each week produces a graph snapshot representing the current market structure.
-
-## Node Features
-
-Typical features include:
-
-* momentum
-* volatility
-
-These features are combined with graph structure through GAT.
-
-## GAT Embeddings
-
-Graph Attention Networks produce embeddings that capture:
-
-* asset co-movement
-* sector-like clustering
-* dynamic relationships
-
-## Contextual Bandits
-
-Embeddings are used as context for decision-making algorithms such as:
-
-* LinUCB
-* Greedy
-* Random
-
-The bandit selects assets over time and receives rewards based on returns.
-
----
-
-# Running the Project
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
 
 Run the full pipeline:
-
 ```bash
 python run_pipeline.py
 ```
 
 Run bandit experiments:
-
 ```bash
 python run_bandits.py
 ```
 
 ---
 
-# Notes
+## Project Structure
 
-The following directories are intentionally excluded from version control:
+```
+GAT-LINUCB/
+├── src/
+│   ├── block3/
+│   │   └── embed.py          # GAT embedding generation
+│   └── 02_prepare_weekly_adjclose.py
+├── notebooks/
+│   └── analysis_linucb.ipynb # Full analysis and visualizations
+├── reports/                  # Result figures
+├── run_pipeline.py           # End-to-end pipeline
+├── run_bandits.py            # Bandit experiments
+├── config.py
+├── requirements.txt
+└── Dockerfile
+```
 
-* artifacts/
-* data/
-* logs/
-
-They contain generated outputs that can be recreated by running the pipeline.
-
----
-
-# Future Work
-
-Possible extensions include:
-
-* EXP3 bandits
-* combinatorial bandits
-* portfolio-level reward functions
-* risk-adjusted evaluation metrics
-* dynamic graph models
+Generated artifacts (`artifacts/`, `data/`, `logs/`) are excluded from version control — fully reproducible by running the pipeline.
 
 ---
 
-# Research Context
+## Experiment Setup
 
-This project sits at the intersection of:
+- **Period:** January 2023 – present (weekly frequency)
+- **Universe:** S&P 500 constituents + global ETFs
+- **Embedding dimension:** d=16 (GAT) vs d=2 (raw features)
+- **Evaluation:** Cumulative reward, empirical regret, repeat rate, θ_t norm evolution
 
-* Graph Neural Networks
-* Financial network modeling
-* Online learning and contextual bandits
+---
 
-It explores whether **graph-aware representations improve sequential asset selection** compared to traditional feature-based approaches.
+## Stack
+
+`Python` · `PyTorch` · `PyTorch Geometric` · `Scikit-learn` · `Pandas` · `NumPy` · `Matplotlib` · `Docker` · `AWS`
+
+---
+
+## Research Context
+
+This project sits at the intersection of graph neural networks, financial network modeling, and online learning. It explores whether **graph-aware asset representations improve sequential decision-making** compared to traditional feature-based approaches.
+
+Related areas: temporal graph networks, portfolio optimization, multi-armed bandits, reinforcement learning for finance.
+
+---
+
+## Future Work
+
+- EXP3 bandits for adversarial settings
+- Combinatorial bandits for portfolio-level selection
+- Risk-adjusted reward functions (Sharpe ratio)
+- Dynamic graph models (evolving edge weights)
+- RAGAS-style evaluation framework
+
+---
+
+## Author
+
+**Andrés García** · Computer Scientist · Universidad Nacional de Colombia  
+[GitHub](https://github.com/agarcia1607) · [LinkedIn](https://www.linkedin.com/in/andrés-felipe-garcía-orrego-17965b218)
+
+## License
+
+MIT
