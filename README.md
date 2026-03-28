@@ -182,13 +182,33 @@ Related areas: temporal graph networks, portfolio optimization, multi-armed band
 
 ---
 
-## Future Work
+## Research Roadmap
 
-- EXP3 bandits for adversarial settings
-- Combinatorial bandits for portfolio-level selection
-- Risk-adjusted reward functions (Sharpe ratio)
-- Dynamic graph models (evolving edge weights)
-- RAGAS-style evaluation framework
+The current system selects a single asset per week using LinUCB with cumulative return as reward. The following extensions form a coherent research agenda toward realistic portfolio optimization.
+
+### Phase 1 — Risk-Adjusted Reward (Sharpe Ratio)
+Replace raw weekly return with a rolling Sharpe ratio as the bandit reward signal.
+
+**Hypothesis:** LinUCB reduces directional variance per iteration through iterative θ_t updates — as uncertainty shrinks, the agent stabilizes its selections. Since Sharpe ratio penalizes variance in the denominator, a variance-reducing algorithm should improve Sharpe more strongly than raw return alone. θ_t norm convergence observed after t≈100 weeks supports this.
+
+### Phase 2 — EXP3 (Adversarial Bandits)
+Introduce EXP3 as an adversarial baseline that makes no assumptions about reward stationarity.
+
+**Hypothesis:** LinUCB should outperform EXP3 in stable market regimes (exploits learned structure), while EXP3 should be more robust during regime changes (bull/bear transitions). The 2023–present dataset has sufficient regime variation to test this.
+
+### Phase 3 — Combinatorial Bandits
+Extend from single-asset selection to portfolio-level selection (k assets per week simultaneously).
+
+**Hypothesis:** Combinatorial LinUCB with GAT embeddings should learn asset correlations directly from graph structure, producing diversified portfolios with improved Sharpe ratio — the reward signal from Phase 1 becomes the natural objective for portfolio construction.
+
+### Full research pipeline
+```
+LinUCB (current baseline)
+    + Sharpe reward          → risk-adjusted optimization
+    + EXP3                   → adversarial vs stationary comparison
+    + Combinatorial bandits  → portfolio-level selection
+    + GAT embeddings         → graph-aware context for all policies
+```
 
 ---
 
