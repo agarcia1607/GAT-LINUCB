@@ -179,3 +179,17 @@ print("\nFigura guardada: reports/figures/financial_evaluation.png")
 
 df_metrics.to_csv('reports/financial_metrics.csv', index=False)
 print("Métricas guardadas: reports/financial_metrics.csv")
+
+# --- Análisis ventanas recientes ---
+print("\n=== Recent Window Analysis (Sharpe reward, converged) ===")
+print(f"{'Window':>12} | {'Ann.Ret':>8} | {'Sharpe':>6} | {'Sortino':>7} | {'MaxDD':>7} | {'Assets':>6}")
+print('-'*58)
+
+df_linucb = logs_emb['linucb']
+for label, n in [('Last 8w', 8), ('Last 12w', 12), ('Last 26w', 26), ('Last 52w', 52)]:
+    subset = df_linucb.tail(n)
+    r = subset['reward_raw']
+    assets = subset['asset'].nunique()
+    down = r[r<0].std()
+    so = np.sqrt(WEEKS)*r.mean()/down if down>0 else 0
+    print(f"{label:>12} | {annual_return(r):>8.1%} | {sharpe(r):>6.3f} | {so:>7.3f} | {max_drawdown((1+r).cumprod()):>7.1%} | {assets:>6}")

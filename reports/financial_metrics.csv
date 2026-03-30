@@ -1,5 +1,5 @@
 Policy,Ann. Return,Sharpe,Sortino,Max Drawdown,Volatility,Calmar
-LinUCB + Sharpe Reward,38.1%,0.769,1.204,-39.9%,80.3%,0.955
-Greedy,10.4%,0.479,0.649,-17.5%,30.5%,0.595
+LinUCB + Sharpe Reward,28.4%,0.678,1.085,-38.4%,80.6%,0.739
+Greedy,8.2%,0.432,0.597,-16.5%,26.0%,0.495
 Random,24.2%,0.850,1.220,-19.9%,31.2%,1.214
 S&P 500 (benchmark),18.9%,1.291,1.822,-10.4%,14.2%,1.815
