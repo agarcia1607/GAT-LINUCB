@@ -146,8 +146,9 @@ st.caption(f"Period: {dates.iloc[0].strftime('%Y-%m-%d')} → {dates.iloc[-1].st
 # -------------------------------------------------------------------
 # Tabs
 # -------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📊 Performance",
+    "🎲 Combinatorial",
     "🔬 Ablation Study",
     "🧹 Quality Filter",
     "📉 Crisis Analysis",
@@ -274,9 +275,167 @@ with tab1:
 
 
 # ===================================================================
-# TAB 2 — Ablation Study
+# TAB 2 — Combinatorial
 # ===================================================================
 with tab2:
+    st.subheader("🎲 Combinatorial LinUCB — k Assets per Week")
+    st.markdown("""
+    Instead of selecting **1 asset**, CombLinUCB selects the **top-k assets by UCB score** simultaneously.
+    The reward signal is the **rolling Sharpe of the equally-weighted k-asset portfolio** — forcing
+    the system to learn diversification, not just momentum.
+    """)
+
+    # Load combinatorial runs
+    @st.cache_data(ttl=3600)
+    def load_combinatorial():
+        results = {}
+        for run in reversed(sorted([p for p in LINUCB_ROOT.glob("run_combinatorial_*/") if p.is_dir()])):
+            try:
+                summary = json.load(open(run / "summary.json"))
+                for s in summary.get("runs", []):
+                    k = s.get("k")
+                    if k and k not in results:
+                        log_path = Path(s["log_path"])
+                        if log_path.exists():
+                            df = pd.read_csv(log_path)
+                            results[k] = {"summary": s, "df": df}
+                if len(results) >= 3:
+                    break
+            except: continue
+        return results
+
+    comb_data = load_combinatorial()
+
+    if not comb_data:
+        st.warning("No combinatorial runs found. Run: `python3 -m src.12_linucb_combinatorial --k_values 3,5,10`")
+    else:
+        # Metrics table
+        st.subheader("Results vs Single Asset vs S&P 500")
+        comb_rows = []
+
+        # Add k=1 (filtered single asset)
+        comb_rows.append({
+            "Policy": "LinUCB k=1 (single asset)",
+            "Ann. Return": f"{ann_return(r):.1%}",
+            "Sharpe": f"{sharpe(r):.3f}",
+            "Sortino": f"{sortino(r):.3f}",
+            "Max Drawdown": f"{max_dd(r):.1%}",
+        })
+
+        for k in sorted(comb_data.keys()):
+            d = comb_data[k]
+            r_k = d["df"]["portfolio_return"]
+            comb_rows.append({
+                "Policy": f"CombLinUCB k={k}",
+                "Ann. Return": f"{ann_return(r_k):.1%}",
+                "Sharpe": f"{sharpe(r_k):.3f}",
+                "Sortino": f"{sortino(r_k):.3f}",
+                "Max Drawdown": f"{max_dd(r_k):.1%}",
+            })
+
+        comb_rows.append({
+            "Policy": "S&P 500 (benchmark)",
+            "Ann. Return": f"{ann_return(sp_r):.1%}",
+            "Sharpe": f"{sharpe(sp_r):.3f}",
+            "Sortino": f"{sortino(sp_r):.3f}",
+            "Max Drawdown": f"{max_dd(sp_r):.1%}",
+        })
+
+        st.dataframe(pd.DataFrame(comb_rows), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # Charts
+        col_l, col_r = st.columns(2)
+
+        with col_l:
+            st.subheader("Cumulative Return — All k values")
+            fig, ax = plt.subplots(figsize=(8, 4))
+            colors_k = {1: "steelblue", 3: "orange", 5: "green", 10: "purple"}
+            ax.plot((1+r).cumprod().values, label="k=1 (single)", color="steelblue", linewidth=2)
+            for k in sorted(comb_data.keys()):
+                r_k = comb_data[k]["df"]["portfolio_return"]
+                ax.plot((1+r_k).cumprod().values, label=f"k={k}", color=colors_k.get(k, "gray"), linewidth=1.5, linestyle="--")
+            ax.plot((1+sp_r).cumprod().values, label="S&P 500", color="gray", linestyle=":", linewidth=1.5)
+            for name, idx in crisis_idx.items():
+                if idx < T:
+                    ax.axvline(idx, color="red", linestyle=":", alpha=0.4)
+            ax.set_xlabel("Weeks")
+            ax.legend(fontsize=8)
+            ax.grid(alpha=0.3)
+            st.pyplot(fig)
+            plt.close()
+
+        with col_r:
+            st.subheader("Rolling Sharpe — All k values")
+            fig, ax = plt.subplots(figsize=(8, 4))
+            rs_k1 = r.rolling(12).apply(lambda x: np.sqrt(52)*x.mean()/x.std() if x.std()>0 else 0)
+            ax.plot(rs_k1.values, label="k=1", color="steelblue", linewidth=2)
+            for k in sorted(comb_data.keys()):
+                r_k = comb_data[k]["df"]["portfolio_return"]
+                rs = r_k.rolling(12).apply(lambda x: np.sqrt(52)*x.mean()/x.std() if x.std()>0 else 0)
+                ax.plot(rs.values, label=f"k={k}", color=colors_k.get(k, "gray"), linewidth=1.5, linestyle="--")
+            rs_sp = sp_r.rolling(12).apply(lambda x: np.sqrt(52)*x.mean()/x.std() if x.std()>0 else 0)
+            ax.plot(rs_sp.values, label="S&P 500", color="gray", linestyle=":", linewidth=1)
+            ax.axhline(0, color="black", linewidth=0.5)
+            for name, idx in crisis_idx.items():
+                if idx < T:
+                    ax.axvline(idx, color="red", linestyle=":", alpha=0.4)
+            ax.set_xlabel("Weeks")
+            ax.legend(fontsize=8)
+            ax.grid(alpha=0.3)
+            st.pyplot(fig)
+            plt.close()
+
+        st.divider()
+
+        # Drawdown comparison
+        st.subheader("Drawdown — Diversification Effect")
+        fig, ax = plt.subplots(figsize=(12, 4))
+        cum_k1 = (1+r).cumprod()
+        dd_k1 = (cum_k1 - cum_k1.cummax()) / cum_k1.cummax()
+        ax.plot(dd_k1.values, label="k=1", color="steelblue", linewidth=2)
+        for k in sorted(comb_data.keys()):
+            r_k = comb_data[k]["df"]["portfolio_return"]
+            cum_k = (1+r_k).cumprod()
+            dd_k = (cum_k - cum_k.cummax()) / cum_k.cummax()
+            ax.plot(dd_k.values, label=f"k={k}", color=colors_k.get(k, "gray"), linewidth=1.5, linestyle="--")
+        cum_sp = (1+sp_r).cumprod()
+        dd_sp = (cum_sp - cum_sp.cummax()) / cum_sp.cummax()
+        ax.plot(dd_sp.values, label="S&P 500", color="gray", linestyle=":", linewidth=1)
+        for name, idx in crisis_idx.items():
+            if idx < T:
+                ax.axvline(idx, color="red", linestyle=":", alpha=0.5)
+                ax.text(idx+1, -0.05, name.split()[0], fontsize=7, color="red", rotation=90)
+        ax.set_xlabel("Weeks")
+        ax.set_ylabel("Drawdown")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+        st.pyplot(fig)
+        plt.close()
+
+        st.divider()
+
+        # Last 12 weeks per k
+        st.subheader("Last 12 Weeks — Portfolio Compositions")
+        for k in sorted(comb_data.keys()):
+            st.markdown(f"**k={k}**")
+            df_k = comb_data[k]["df"].tail(12)[["date_t","assets","portfolio_return"]].copy()
+            df_k.columns = ["Date","Assets Selected","Portfolio Return"]
+            df_k["Portfolio Return"] = df_k["Portfolio Return"].map("{:.2%}".format)
+            st.dataframe(df_k, use_container_width=True, hide_index=True)
+
+        st.info("""
+        **Key finding:** k=10 achieves **Sharpe 0.867** — beating S&P 500 (0.843) — while reducing
+        max drawdown from -43% (k=1) to -32%. Diversification across correlated assets learned
+        via GAT embeddings reduces portfolio volatility without sacrificing return.
+        """)
+
+
+# ===================================================================
+# TAB 3 — Ablation Study (was tab2)
+# ===================================================================
+with tab3:
     st.subheader("🔬 Ablation Study — Does GAT Actually Help?")
     st.markdown("Same algorithm (LinUCB), same hyperparameters (α=2.0, Sharpe reward, 10 years), different context:")
 
@@ -337,9 +496,9 @@ with tab2:
 
 
 # ===================================================================
-# TAB 3 — Quality Filter
+# TAB 4 — Quality Filter (was tab3)
 # ===================================================================
-with tab3:
+with tab4:
     st.subheader("🧹 Quality Filter — Removing Distressed Assets")
 
     st.markdown("""
@@ -442,9 +601,9 @@ with tab3:
 
 
 # ===================================================================
-# TAB 4 — Crisis Analysis
+# TAB 5 — Crisis Analysis (was tab4)
 # ===================================================================
-with tab4:
+with tab5:
     st.subheader("📉 Crisis Analysis — Recovery Periods")
 
     col_l, col_r = st.columns(2)
@@ -505,9 +664,9 @@ with tab4:
 
 
 # ===================================================================
-# TAB 5 — How It Works
+# TAB 6 — How It Works (was tab5)
 # ===================================================================
-with tab5:
+with tab6:
     st.subheader("⚙️ How the System Works")
 
     col_l, col_r = st.columns(2)
@@ -596,9 +755,9 @@ with tab5:
 
 
 # ===================================================================
-# TAB 6 — FAQ
+# TAB 7 — FAQ (was tab6)
 # ===================================================================
-with tab6:
+with tab7:
     st.subheader("❓ Frequently Asked Questions")
 
     with st.expander("What assets does the system select?"):

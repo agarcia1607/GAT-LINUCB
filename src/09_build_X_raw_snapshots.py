@@ -15,7 +15,7 @@ def main():
     df = load_weekly_returns_aligned()
 
     # Especificación causal (misma del pipeline de snapshots)
-    spec = FiltrationSpec(W_corr=24, W_mom=4, start_date="2023-01-01")
+    spec = FiltrationSpec(W_corr=24, W_mom=4, start_date="2015-01-01")
 
     out_dir = Path("artifacts/X_raw/npy")
     out_dir.mkdir(parents=True, exist_ok=True)

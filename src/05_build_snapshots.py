@@ -50,7 +50,7 @@ def save_snapshot_npz(out_dir: Path, date_str: str, X: np.ndarray, edge_index: n
 
 def main():
     # --- Config BLOQUE 2 (cerrado)
-    spec = FiltrationSpec(W_corr=24, W_mom=4, start_date="2023-01-01")
+    spec = FiltrationSpec(W_corr=24, W_mom=4, start_date="2015-01-01")
     k = 8
     clip_value = 3.0
     normalize_edge_attr = True
