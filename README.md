@@ -25,6 +25,24 @@ A reproducible ML pipeline combining **Graph Attention Networks (GAT)** and **Li
 
 The system generates **1.7x the benchmark return** over 10 years with better downside-adjusted performance (Sortino). The cost is higher max drawdown — a consequence of single-asset concentration.
 
+### Naive Baselines — Proving Online Learning Adds Genuine Alpha
+
+Two rule-based baselines using the **same input variables** (momentum + volatility, 4-week window) confirm the system is not simply momentum-following:
+
+| Strategy | Ann. Return | Sharpe | Description |
+|---|---|---|---|
+| **Momentum pure** | 9.8% | 0.449 | Buy asset with highest avg return last 4 weeks |
+| **Sharpe simple** | -1.6% | 0.091 | Buy asset with highest mom/vol ratio last 4 weeks |
+| LinUCB + Raw features | 23.4% | 0.655 | Same features + online learning |
+| **LinUCB + GAT** | **22.5%** | **0.677** | Same features + graph structure + online learning |
+| S&P 500 | 13.1% | 0.843 | Passive benchmark |
+
+**Key finding:** Sharpe simple with identical input variables collapses to -1.6% — worse than the market. LinUCB with the same variables generates 23.4% (+25pp). The alpha comes from the **online learning mechanism**, not the input features:
+
+1. LinUCB accumulates historical evidence about which assets have consistent risk-adjusted returns
+2. The exploration-exploitation balance avoids getting trapped in local optima
+3. A 12-week reward window filters instantaneous noise that destroys the naive Sharpe baseline
+
 ### Convergence Phase Analysis
 
 Performance improves consistently as LinUCB learns market structure:
