@@ -146,9 +146,10 @@ st.caption(f"Period: {dates.iloc[0].strftime('%Y-%m-%d')} → {dates.iloc[-1].st
 # -------------------------------------------------------------------
 # Tabs
 # -------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📊 Performance",
     "🎲 Combinatorial",
+    "🧪 LinTS vs LinUCB",
     "🔬 Ablation Study",
     "🧹 Quality Filter",
     "📉 Crisis Analysis",
@@ -345,6 +346,46 @@ with tab2:
 
         st.divider()
 
+        # Weekly returns per k
+        st.subheader("Weekly Portfolio Return — All k values")
+        st.markdown("Weekly return of the equally-weighted portfolio for each k. Positive weeks in green, negative in red.")
+
+        for k in sorted(comb_data.keys()):
+            df_k = comb_data[k]["df"].reset_index(drop=True)
+            r_k = df_k["portfolio_return"]
+            dates_k = pd.to_datetime(df_k["date_t"])
+
+            fig, ax = plt.subplots(figsize=(12, 3))
+            colors_bar = ["steelblue" if v >= 0 else "tomato" for v in r_k]
+            ax.bar(range(len(r_k)), r_k.values * 100, color=colors_bar, alpha=0.7, width=0.8)
+            ax.axhline(0, color="black", linewidth=0.5)
+            for name, idx in crisis_idx.items():
+                if idx < len(r_k):
+                    ax.axvline(idx, color="red", linestyle=":", alpha=0.5)
+                    ax.text(idx+1, ax.get_ylim()[1]*0.85, name.split()[0], fontsize=6, color="red", rotation=90)
+            # Phase boundaries
+            Tk = len(r_k)
+            ax.axvline(Tk//3, color="orange", linestyle=":", alpha=0.6)
+            ax.axvline(2*Tk//3, color="orange", linestyle=":", alpha=0.6)
+            ax.set_title(f"k={k} — Weekly Portfolio Return (%)")
+            ax.set_xlabel("Weeks")
+            ax.set_ylabel("Return (%)")
+            ax.grid(alpha=0.2, axis="y")
+            # Add year labels on x axis
+            year_ticks = []
+            year_labels = []
+            for i, d in enumerate(dates_k):
+                if i == 0 or dates_k.iloc[i].year != dates_k.iloc[i-1].year:
+                    year_ticks.append(i)
+                    year_labels.append(str(dates_k.iloc[i].year))
+            ax.set_xticks(year_ticks)
+            ax.set_xticklabels(year_labels, fontsize=8)
+            st.pyplot(fig)
+            plt.close()
+
+
+        st.divider()
+
         # Charts
         col_l, col_r = st.columns(2)
 
@@ -425,6 +466,106 @@ with tab2:
             df_k["Portfolio Return"] = df_k["Portfolio Return"].map("{:.2%}".format)
             st.dataframe(df_k, use_container_width=True, hide_index=True)
 
+        st.divider()
+
+        # Phase analysis per k
+        st.subheader("Phase Analysis — GAT Embeddings")
+        phase_comb_rows = []
+        for k in sorted(comb_data.keys()):
+            r_k = comb_data[k]["df"]["portfolio_return"].reset_index(drop=True)
+            Tk = len(r_k)
+            tk1, tk2 = Tk//3, 2*Tk//3
+            for label, s, e in [("Early", 0, tk1), ("Mid", tk1, tk2), ("Late", tk2, Tk)]:
+                ry = r_k.iloc[s:e]
+                phase_comb_rows.append({
+                    "k": k,
+                    "Phase": label,
+                    "Ann. Return": f"{ann_return(ry):.1%}",
+                    "Sharpe": f"{sharpe(ry):.3f}",
+                    "Max Drawdown": f"{max_dd(ry):.1%}",
+                })
+        st.dataframe(pd.DataFrame(phase_comb_rows), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # Ablation combinatorial
+        st.subheader("Ablation Study — GAT vs Raw vs Random (same K=453)")
+        st.markdown("Does GAT help in combinatorial selection? Same universe, same k, different context:")
+
+        @st.cache_data(ttl=3600)
+        def load_comb_ablation():
+            results = {"GAT": {}, "Raw": {}, "Random": {}}
+            run_map = {
+                "GAT":    "run_combinatorial_20260401_164113",
+                "Raw":    "run_combinatorial_20260401_165747",
+                "Random": "run_combinatorial_random_20260401_165021",
+            }
+            for label, run_name in run_map.items():
+                run_dir = LINUCB_ROOT / run_name
+                if not run_dir.exists():
+                    continue
+                try:
+                    s = json.load(open(run_dir / "summary.json"))
+                    for r in s.get("runs", []):
+                        k = r.get("k")
+                        log = Path(r["log_path"])
+                        if k and log.exists():
+                            df = pd.read_csv(log)
+                            results[label][k] = df["portfolio_return"].reset_index(drop=True)
+                except:
+                    continue
+            return results
+
+        abl_comb = load_comb_ablation()
+
+        abl_comb_rows = []
+        for k in [3, 5, 10]:
+            for label in ["GAT", "Raw", "Random"]:
+                if k in abl_comb.get(label, {}):
+                    rv = abl_comb[label][k]
+                    abl_comb_rows.append({
+                        "k": k,
+                        "Context": label,
+                        "Ann. Return": f"{ann_return(rv):.1%}",
+                        "Sharpe": f"{sharpe(rv):.3f}",
+                        "Sortino": f"{sortino(rv):.3f}",
+                        "Max Drawdown": f"{max_dd(rv):.1%}",
+                    })
+
+        if abl_comb_rows:
+            st.dataframe(pd.DataFrame(abl_comb_rows), use_container_width=True, hide_index=True)
+
+            # Ablation chart — Sharpe by k and context
+            fig, ax = plt.subplots(figsize=(10, 4))
+            x = [3, 5, 10]
+            colors_ctx = {"GAT": "steelblue", "Raw": "orange", "Random": "green"}
+            for label in ["GAT", "Raw", "Random"]:
+                sharpes = []
+                for k in x:
+                    if k in abl_comb.get(label, {}):
+                        sharpes.append(sharpe(abl_comb[label][k]))
+                    else:
+                        sharpes.append(0)
+                ax.plot(x, sharpes, marker="o", label=label, color=colors_ctx[label], linewidth=2)
+            ax.axhline(sharpe(sp_r), color="gray", linestyle="--", label=f"S&P 500 ({sharpe(sp_r):.3f})")
+            ax.set_xlabel("k (assets per week)")
+            ax.set_ylabel("Sharpe Ratio")
+            ax.set_title("Sharpe by Context and k")
+            ax.set_xticks(x)
+            ax.legend()
+            ax.grid(alpha=0.3)
+            st.pyplot(fig)
+            plt.close()
+
+        st.warning("""
+        **Key finding — combinatorial ablation:** Raw features outperform GAT embeddings across all k values.
+        GAT advantage is **specific to single-asset selection (k=1)**. In portfolio selection, simpler
+        momentum+volatility features produce more stable diversification learning.
+
+        **Implication:** The graph should be used explicitly to **penalize correlated asset selection**,
+        not just as context features. This is the next research direction.
+        """)
+
         st.info("""
         **Key finding:** k=10 achieves **Sharpe 0.867** — beating S&P 500 (0.843) — while reducing
         max drawdown from -43% (k=1) to -32%. Diversification across correlated assets learned
@@ -433,9 +574,162 @@ with tab2:
 
 
 # ===================================================================
-# TAB 3 — Ablation Study (was tab2)
+
+
+# ===================================================================
+# TAB 3 — LinTS vs LinUCB
 # ===================================================================
 with tab3:
+    st.subheader("🧪 Linear Thompson Sampling vs LinUCB")
+    st.markdown("""
+    **LinTS** is the Bayesian counterpart to LinUCB. Instead of a deterministic UCB score,
+    it samples θ̃ from the posterior and selects the action maximizing expected reward under that sample:
+
+    | Algorithm | Selection rule |
+    |---|---|
+    | LinUCB | argmax_a [ x_a^T θ̂ + α √(x_a^T A⁻¹ x_a) ] |
+    | LinTS | θ̃ ~ N(θ̂, v² A⁻¹) → argmax_a [ x_a^T θ̃ ] |
+
+    Same update rule (Sherman-Morrison). Different exploration mechanism.
+    """)
+
+    @st.cache_data(ttl=3600)
+    def load_lints_runs():
+        results = {}
+        # LinTS GAT k=1
+        for run in reversed(sorted([p for p in LINUCB_ROOT.glob("run_lints_embeddings_*/") if p.is_dir()])):
+            try:
+                df = pd.read_csv(run / "logs_lints.csv")
+                if len(df) > 400:
+                    results["LinTS + GAT (best v)"] = {"df": df, "run": str(run)}
+                    break
+            except: continue
+        # LinTS Raw k=1
+        for run in reversed(sorted([p for p in LINUCB_ROOT.glob("run_lints_X_raw_*/") if p.is_dir()])):
+            try:
+                df = pd.read_csv(run / "logs_lints.csv")
+                if len(df) > 400:
+                    results["LinTS + Raw (v=0.001)"] = {"df": df, "run": str(run)}
+                    break
+            except: continue
+        # CombLinTS
+        for run in reversed(sorted([p for p in LINUCB_ROOT.glob("run_comb_lints_*/") if p.is_dir()])):
+            try:
+                for k in [3, 5, 10]:
+                    log = run / f"logs_comb_lints_k{k}.csv"
+                    if log.exists():
+                        df = pd.read_csv(log)
+                        if len(df) > 400:
+                            results[f"CombLinTS k={k}"] = {"df": df, "col": "portfolio_return"}
+            except: continue
+            if any(f"CombLinTS k=" in k for k in results):
+                break
+        return results
+
+    lints_data = load_lints_runs()
+
+    # --- Metrics table ---
+    st.subheader("Results — LinTS vs LinUCB vs S&P 500")
+    lints_rows = []
+
+    # LinUCB reference
+    lints_rows.append({
+        "Policy": "LinUCB + GAT (α=2.0)",
+        "Ann. Return": f"{ann_return(r):.1%}",
+        "Sharpe": f"{sharpe(r):.3f}",
+        "Sortino": f"{sortino(r):.3f}",
+        "Max Drawdown": f"{max_dd(r):.1%}",
+        "Note": "Frequentist UCB",
+    })
+
+    for label, d in lints_data.items():
+        col = d.get("col", "reward_raw")
+        rv = d["df"][col].reset_index(drop=True)
+        note = "⚠️ Momentum puro" if "Raw" in label and "Comb" not in label else "Bayesian TS"
+        lints_rows.append({
+            "Policy": label,
+            "Ann. Return": f"{ann_return(rv):.1%}",
+            "Sharpe": f"{sharpe(rv):.3f}",
+            "Sortino": f"{sortino(rv):.3f}",
+            "Max Drawdown": f"{max_dd(rv):.1%}",
+            "Note": note,
+        })
+
+    lints_rows.append({
+        "Policy": "S&P 500",
+        "Ann. Return": f"{ann_return(sp_r):.1%}",
+        "Sharpe": f"{sharpe(sp_r):.3f}",
+        "Sortino": f"{sortino(sp_r):.3f}",
+        "Max Drawdown": f"{max_dd(sp_r):.1%}",
+        "Note": "Benchmark",
+    })
+
+    st.dataframe(pd.DataFrame(lints_rows), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # --- Cumulative return chart ---
+    st.subheader("Cumulative Return — LinTS vs LinUCB vs S&P 500")
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot((1+r).cumprod().values, label="LinUCB + GAT", color="steelblue", linewidth=2)
+    colors_lints = {
+        "LinTS + GAT (best v)": ("red", "--"),
+        "LinTS + Raw (v=0.001)": ("orange", "--"),
+        "CombLinTS k=3": ("purple", ":"),
+        "CombLinTS k=5": ("green", ":"),
+        "CombLinTS k=10": ("brown", ":"),
+    }
+    for label, d in lints_data.items():
+        col = d.get("col", "reward_raw")
+        rv = d["df"][col].reset_index(drop=True)
+        color, ls = colors_lints.get(label, ("gray", "--"))
+        ax.plot((1+rv).cumprod().values, label=label, color=color, linestyle=ls, linewidth=1.5)
+    ax.plot((1+sp_r).cumprod().values, label="S&P 500", color="gray", linestyle=":", linewidth=1)
+    for name, idx in crisis_idx.items():
+        if idx < T:
+            ax.axvline(idx, color="red", linestyle=":", alpha=0.3)
+    ax.set_xlabel("Weeks")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+    st.pyplot(fig)
+    plt.close()
+
+    st.divider()
+
+    # --- Annual performance LinTS Raw ---
+    if "LinTS + Raw (v=0.001)" in lints_data:
+        st.subheader("LinTS + Raw — Annual Performance (momentum risk)")
+        df_raw = lints_data["LinTS + Raw (v=0.001)"]["df"].copy()
+        df_raw["year"] = pd.to_datetime(df_raw["date_t"]).dt.year
+        annual_lints = []
+        for year, group in df_raw.groupby("year"):
+            ry = group["reward_raw"].reset_index(drop=True)
+            if len(ry) > 4:
+                top_asset = group["asset"].value_counts().index[0]
+                annual_lints.append({
+                    "Year": year,
+                    "Ann. Return": f"{ann_return(ry):.1%}",
+                    "Sharpe": f"{sharpe(ry):.3f}",
+                    "Top Asset": top_asset,
+                    "Risk": "🔴 HIGH" if ann_return(ry) < -0.2 or ann_return(ry) > 1.5 else "🟡 MED" if abs(ann_return(ry)) > 0.5 else "🟢 OK",
+                })
+        st.dataframe(pd.DataFrame(annual_lints), use_container_width=True, hide_index=True)
+        st.caption("High returns in 2016 (AMD +300%) and 2020 (TSLA +700%) are momentum-driven, not structural signal.")
+
+    st.divider()
+
+    st.warning("""
+    **Key findings — LinTS:**
+    - **LinTS + GAT (d=16):** Does not converge. High-dimensional posterior sampling requires too many observations with K=453 assets.
+    - **LinTS + Raw (d=2):** Degenerates to momentum-pure strategy. v=0.001 barely explores — system rides strong trends (AMD 2016: +296%, TSLA 2020: +320%) and crashes on reversals (PSKY 2021: -53%).
+    - **CombLinTS k≥3:** Works well. Portfolio diversification dampens sampling noise. Outperforms CombLinUCB in annualized return across all k values.
+
+    **Conclusion:** LinTS advantage is specific to the combinatorial case. For single-asset selection with high-dimensional embeddings, LinUCB is more robust.
+    """)
+
+# TAB 4 — Ablation Study
+# ===================================================================
+with tab4:
     st.subheader("🔬 Ablation Study — Does GAT Actually Help?")
     st.markdown("Same algorithm (LinUCB), same hyperparameters (α=2.0, Sharpe reward, 10 years), different context:")
 
@@ -496,9 +790,9 @@ with tab3:
 
 
 # ===================================================================
-# TAB 4 — Quality Filter (was tab3)
+# TAB 5 — Quality Filter
 # ===================================================================
-with tab4:
+with tab5:
     st.subheader("🧹 Quality Filter — Removing Distressed Assets")
 
     st.markdown("""
@@ -601,9 +895,9 @@ with tab4:
 
 
 # ===================================================================
-# TAB 5 — Crisis Analysis (was tab4)
+# TAB 6 — Crisis Analysis
 # ===================================================================
-with tab5:
+with tab6:
     st.subheader("📉 Crisis Analysis — Recovery Periods")
 
     col_l, col_r = st.columns(2)
@@ -664,9 +958,9 @@ with tab5:
 
 
 # ===================================================================
-# TAB 6 — How It Works (was tab5)
+# TAB 7 — How It Works
 # ===================================================================
-with tab6:
+with tab7:
     st.subheader("⚙️ How the System Works")
 
     col_l, col_r = st.columns(2)
@@ -755,9 +1049,9 @@ with tab6:
 
 
 # ===================================================================
-# TAB 7 — FAQ (was tab6)
+# TAB 8 — FAQ
 # ===================================================================
-with tab7:
+with tab8:
     st.subheader("❓ Frequently Asked Questions")
 
     with st.expander("What assets does the system select?"):
