@@ -1,0 +1,12 @@
+{
+  "momentum_pure": {
+    "ann_return": 0.098,
+    "sharpe": 0.449,
+    "description": "max mom4 weekly"
+  },
+  "sharpe_simple": {
+    "ann_return": -0.016,
+    "sharpe": 0.091,
+    "description": "max mom4/vol4 weekly"
+  }
+}
